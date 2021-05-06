@@ -15,12 +15,12 @@ import requests
 import json
 
 #fucntin to send message to telegram
-def send_message(availableShots, centerName = "NA", centerPincode = "NA", vaccine = "NA"):
+def send_message(availableShots, forDate = "NA", errorCode = "NA", centerName = "NA", centerPincode = "NA", vaccine = "NA"):
     
     #creating the message
-    if(availableShots == -2):
-        message = "website got shitfucked"
-    elif(availableShots == -1):
+    if(availableShots == "error"):
+        message = "website got shitfucked " + forDate + " with error " + errorCode 
+    elif(availableShots == "running"):
         message = "Still No Hope"
     else:
         message = availableShots + " shots available at " + centerName + ", " + centerPincode + " of vaccine " + vaccine
@@ -67,10 +67,10 @@ def get_dates():
 
 #check availability of vaccines
 def check_slots():
-    pin_codes = ["133001", "457001", "461111"]
+    pin_codes = ["133001", "457001", "461111", "464001"]
     today = date.today()
     for pin_code in pin_codes:
-        for x in range(0,8):
+        for x in range(1,8):
             nextDate = today+timedelta(x)
             inputDate = nextDate.strftime("%d-%m-%Y")
 
@@ -81,29 +81,29 @@ def check_slots():
 
             response = requests.request("GET", url, headers=headers, data=payload) 
             if(response.status_code != 200):
-                send_message(availableShots=-2)
+                send_message(availableShots="error", forDate=str(inputDate), errorCode=str(response.status_code))
                 break
             available_centers = json.loads(response.text)
             
             if(len(available_centers["sessions"]) != 0):
                 for y in available_centers["sessions"]:
                     if(y["available_capacity"] != 0 and y["min_age_limit"] == 18):
-                        centerName = y["name"]
-                        centerPincode = y["pincode"]
-                        availableShots = y["available_capacity"]
-                        vaccine = y["vaccine"]
+                        centerName = str(y["name"])
+                        centerPincode = str(y["pincode"])
+                        availableShots = str(y["available_capacity"])
+                        vaccine = str(y["vaccine"])
                         send_message(centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine)
             
 #control frequency for checking
 def main_function():
     i = 0
-    send_message(availableShots=-1)
+    send_message(availableShots="running")
     while True:
         i = i + 1
         check_slots()
-        time.sleep(120)
-        if(i%30 == 0):
-            send_message(availableShots=-1)
+        time.sleep(60)
+        if(i%60 == 0):
+            send_message(availableShots="running")
 
 #run the program
 main_function()
