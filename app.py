@@ -70,16 +70,19 @@ def check_slots():
     pin_codes = ["133001", "457001", "461111", "464001"]
     today = date.today()
     for pin_code in pin_codes:
-        for x in range(1,8):
+        for x in range(0,8):
             nextDate = today+timedelta(x)
             inputDate = nextDate.strftime("%d-%m-%Y")
 
             url = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/findByPin?pincode=" + pin_code + "&date=" + inputDate
-
+            proxies = {
+                "http": 'http://59.94.176.111:3128', 
+                "https": 'http://59.94.176.111:3128'
+            }
             payload={}
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51'}
 
-            response = requests.request("GET", url, headers=headers, data=payload) 
+            response = requests.request("GET", url, headers=headers, data=payload, proxies=proxies) 
             if(response.status_code != 200):
                 send_message(availableShots="error", forDate=str(inputDate), errorCode=str(response.status_code))
                 break
