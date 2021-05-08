@@ -14,26 +14,35 @@ import time
 import requests
 import json
 
-#fucntin to send message to telegram
-def send_message(availableShots, forDate = "NA", errorCode = "NA", centerName = "NA", centerPincode = "NA", vaccine = "NA"):
-    
+from lxml.html import fromstring
+from itertools import cycle
+import traceback
+import random
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+#functin to send message to telegram
+def send_message(errorMessage, availableShots = "NA", forDate = "NA", errorCode = "NA", centerName = "NA", centerPincode = "NA", vaccine = "NA"):
     #creating the message
-    if(availableShots == "error"):
-        message = "website got shitfucked " + forDate + " with error " + errorCode 
-    elif(availableShots == "running"):
+    if(errorMessage == "error"):
+        message = "API call didn't work " + str(forDate) + " with error " + str(errorCode) + " for pincode " + str(centerPincode)
+    elif(errorMessage == "running"):
         message = "Still No Hope"
-    else:
-        message = availableShots + " shots available at " + centerName + ", " + centerPincode + " of vaccine " + vaccine
+    elif(errorMessage == "noError"):
+        message = availableShots + " shots available at " + centerName + ", " + centerPincode + " of vaccine " + vaccine + " for date " + str(forDate)
 
     # get your api_id, api_hash, token
     # from telegram as described above
-    api_id = '5779293'
-    api_hash = 'e351456e7d3c2bcde8cc72662272a359'
-    token = '1709171208:AAF5Fgyvr5X4vPOKrQIRyVl0HSw5HJwWyyU'
-    destination_group_invite_link='tg://join?invite=FioEWI7d-sYUIo2J'
+    api_id = os.getenv('API_ID')
+    api_hash = os.getenv('API_HASH')
+    #token = os.getenv('TOKEN')
+    destination_group_invite_link = os.getenv('DESTINATION_GROUP_INVITE_LINK')
 
     # your phone number
-    phone = '+918597165881'
+    phone = os.getenv('PHONE')
 
     # creating a telegram session and assigning
     # it to a variable client
@@ -65,29 +74,108 @@ def get_dates():
     d1 = today.strftime("%d-%m-%Y")
     d2 = today + timedelta(days=1)
 
+#function to call each day
+def apiCallForDay(x, pin_code):
+    nextDate = date.today()+timedelta(x)
+    inputDate = nextDate.strftime("%d-%m-%Y")
+
+    url = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/findByPin?pincode=" + pin_code + "&date=" + inputDate
+    
+    payload={}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51'}
+
+    #proxy = random.sample(proxies, k=1)[0]
+    #print(proxy)
+    #proxy = '59.94.176.111:3128'
+    """
+    for proxy in proxies:
+        break
+    """
+    """
+    try:
+        response = requests.request("GET", url, data=payload, proxies={"http": proxy, "https": proxy}, headers = headers) 
+    except:
+        print("Connection Error")
+        break
+    """
+    response = requests.request("GET", url, data=payload, headers=headers) 
+    #response = requests.get(url,proxies={"http": proxy, "https": proxy}, headers = headers)
+    logText = str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Day"
+    print(logText)
+    
+    if(response.status_code != 200):
+        send_message(errorMessage="error", forDate=str(inputDate), errorCode=str(response.status_code), centerPincode=str(pin_code))
+        return
+    available_centers = json.loads(response.text)
+    #pprint.pprint(available_centers["sessions"])
+    if(len(available_centers["sessions"]) != 0):
+        for y in available_centers["sessions"]:
+            if(y["available_capacity"] != 0 and y["min_age_limit"] == 18):
+                centerName = str(y["name"])
+                centerPincode = str(y["pincode"])
+                availableShots = str(y["available_capacity"])
+                vaccine = str(y["vaccine"])
+                send_message(errorMessage="noError", centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine, forDate=inputDate)
+    time.sleep(10)
+
+#function to call for week
+def apiCallForWeek(pin_code):
+    inputDate = date.today().strftime("%d-%m-%Y")
+
+    url = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByPin?pincode=" + pin_code + "&date=" + inputDate
+
+    payload={}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51'}
+
+    response = requests.request("GET", url, data=payload, headers=headers) 
+    logText = str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Week"
+    print(logText)
+    
+    if(response.status_code != 200):
+        send_message(errorMessage="error", forDate=str(inputDate), errorCode=str(response.status_code), centerPincode=str(pin_code))
+        return
+    available_centers = json.loads(response.text)
+    if(len(available_centers["centers"]) != 0):
+        for z in available_centers["centers"]:
+            centerName = str(z["name"])
+            centerPincode = str(z["pincode"])
+            if(len(z["sessions"]) != 0):
+                for y in z["sessions"]:
+                    if(y["available_capacity"] != 0 and y["min_age_limit"] == 18):
+                        availableShots = str(y["available_capacity"])
+                        vaccine = str(y["vaccine"])
+                        send_message(errorMessage="noError", centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine, forDate=inputDate)
+    time.sleep(10)
+
 #check availability of vaccines
-def check_slots():
-    pin_codes = ["133001", "457001", "461111", "464001"]
-    today = date.today()
-    for pin_code in pin_codes:
-        for x in range(0,8):
-            nextDate = today+timedelta(x)
+def check_slots(noOfTimes):
+    print("======================Request " + str(noOfTimes))
+    pin_codes = os.getenv('PIN_CODES').split(',')
+
+    #proxies = get_proxies()
+
+    for x in range(0,7):
+        for pin_code in pin_codes:
+            
+            apiCallForWeek(pin_code)
+            apiCallForDay(x, pin_code)
+            
+            """
+            nextDate = date.today()+timedelta(x)
             inputDate = nextDate.strftime("%d-%m-%Y")
 
             url = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/findByPin?pincode=" + pin_code + "&date=" + inputDate
-            proxies = {
-                "http": 'http://59.94.176.111:3128', 
-                "https": 'http://59.94.176.111:3128'
-            }
+            
             payload={}
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51'}
-
-            response = requests.request("GET", url, headers=headers, data=payload, proxies=proxies) 
+            response = requests.request("GET", url, data=payload, headers=headers) 
+            logText = str(pin_code) + " " + str(inputDate) + " " + str(response.status_code)
+            print(logText)
+            
             if(response.status_code != 200):
-                send_message(availableShots="error", forDate=str(inputDate), errorCode=str(response.status_code))
+                send_message(errorMessage="error", forDate=str(inputDate), errorCode=str(response.status_code), centerPincode=str(pin_code))
                 break
             available_centers = json.loads(response.text)
-            
             if(len(available_centers["sessions"]) != 0):
                 for y in available_centers["sessions"]:
                     if(y["available_capacity"] != 0 and y["min_age_limit"] == 18):
@@ -95,18 +183,34 @@ def check_slots():
                         centerPincode = str(y["pincode"])
                         availableShots = str(y["available_capacity"])
                         vaccine = str(y["vaccine"])
-                        send_message(centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine)
+                        send_message(errorMessage="noError", centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine, forDate=inputDate)
+            time.sleep(10)
+            """
             
+    print("======================Wait " + str(noOfTimes))        
+           
 #control frequency for checking
 def main_function():
     i = 0
-    send_message(availableShots="running")
+    send_message(errorMessage="running")
     while True:
+        check_slots(i)
         i = i + 1
-        check_slots()
-        time.sleep(60)
-        if(i%60 == 0):
-            send_message(availableShots="running")
+        #time.sleep(60)
+        if(i%20 == 0):
+            send_message(errorMessage="running")
+
+#getting proxies function
+def get_proxies():
+    url = 'https://free-proxy-list.net/'
+    response = requests.get(url)
+    parser = fromstring(response.text)
+    proxies = set()
+    for i in parser.xpath('//tbody/tr')[:100]:
+        if(i.xpath('.//td[7][contains(text(),"yes")]') and i.xpath('.//td[4][contains(text(),"India")]')):
+            proxy = ":".join([i.xpath('.//td[1]/text()')[0], i.xpath('.//td[2]/text()')[0]])
+            proxies.add(proxy)
+    return proxies
 
 #run the program
 main_function()
