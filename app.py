@@ -7,7 +7,7 @@ from telethon import TelegramClient, sync, events
 from cowin_api import CoWinAPI
 import pprint
 
-from datetime import date
+from datetime import date, datetime
 from datetime import timedelta
 
 import time
@@ -24,13 +24,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import psycopg2
+
 #functin to send message to telegram
 def send_message(errorMessage, availableShots = "NA", forDate = "NA", errorCode = "NA", centerName = "NA", centerPincode = "NA", vaccine = "NA"):
     #creating the message
     if(errorMessage == "error"):
         message = "API call didn't work " + str(forDate) + " with error " + str(errorCode) + " for pincode " + str(centerPincode)
     elif(errorMessage == "running"):
-        message = "Still No Hope"
+        message = "change kr diya hihihihi"
     elif(errorMessage == "noError"):
         message = availableShots + " shots available at " + centerName + ", " + centerPincode + " of vaccine " + vaccine + " for date " + str(forDate)
 
@@ -75,7 +77,7 @@ def get_dates():
     d2 = today + timedelta(days=1)
 
 #function to call each day
-def apiCallForDay(x, pin_code):
+def apiCallForDay(x, pin_code, conn, noOfTimes):
     nextDate = date.today()+timedelta(x)
     inputDate = nextDate.strftime("%d-%m-%Y")
 
@@ -100,8 +102,8 @@ def apiCallForDay(x, pin_code):
     """
     response = requests.request("GET", url, data=payload, headers=headers) 
     #response = requests.get(url,proxies={"http": proxy, "https": proxy}, headers = headers)
-    logText = str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Day"
-    print(logText)
+    logText = str(noOfTimes) + " " + str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Day " + str(time.strftime("%H:%M:%S", time.localtime()))
+    insertInDB(conn=conn, logText=logText)
     
     if(response.status_code != 200):
         send_message(errorMessage="error", forDate=str(inputDate), errorCode=str(response.status_code), centerPincode=str(pin_code))
@@ -119,7 +121,7 @@ def apiCallForDay(x, pin_code):
     time.sleep(10)
 
 #function to call for week
-def apiCallForWeek(pin_code):
+def apiCallForWeek(pin_code, conn, noOfTimes):
     inputDate = date.today().strftime("%d-%m-%Y")
 
     url = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByPin?pincode=" + pin_code + "&date=" + inputDate
@@ -128,8 +130,8 @@ def apiCallForWeek(pin_code):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51'}
 
     response = requests.request("GET", url, data=payload, headers=headers) 
-    logText = str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Week"
-    print(logText)
+    logText = str(noOfTimes) + " " + str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Week " + str(time.strftime("%H:%M:%S", time.localtime()))
+    insertInDB(conn=conn, logText=logText)
     
     if(response.status_code != 200):
         send_message(errorMessage="error", forDate=str(inputDate), errorCode=str(response.status_code), centerPincode=str(pin_code))
@@ -144,12 +146,12 @@ def apiCallForWeek(pin_code):
                     if(y["available_capacity"] != 0 and y["min_age_limit"] == 18):
                         availableShots = str(y["available_capacity"])
                         vaccine = str(y["vaccine"])
-                        send_message(errorMessage="noError", centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine, forDate=inputDate)
+                        shotDate = str(y['date'])
+                        send_message(errorMessage="noError", centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine, forDate=shotDate)
     time.sleep(10)
 
 #check availability of vaccines
-def check_slots(noOfTimes):
-    print("======================Request " + str(noOfTimes))
+def check_slots(noOfTimes, conn):
     pin_codes = os.getenv('PIN_CODES').split(',')
 
     #proxies = get_proxies()
@@ -157,8 +159,8 @@ def check_slots(noOfTimes):
     for x in range(0,7):
         for pin_code in pin_codes:
             
-            apiCallForWeek(pin_code)
-            apiCallForDay(x, pin_code)
+            apiCallForWeek(pin_code = pin_code, conn = conn, noOfTimes=noOfTimes)
+            apiCallForDay(x = x, pin_code = pin_code, conn = conn, noOfTimes=noOfTimes)
             
             """
             nextDate = date.today()+timedelta(x)
@@ -186,19 +188,19 @@ def check_slots(noOfTimes):
                         send_message(errorMessage="noError", centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine, forDate=inputDate)
             time.sleep(10)
             """
-            
-    print("======================Wait " + str(noOfTimes))        
            
 #control frequency for checking
 def main_function():
     i = 0
+    conn = makeDBconnection()
     send_message(errorMessage="running")
     while True:
-        check_slots(i)
+        check_slots(noOfTimes=i, conn = conn)
         i = i + 1
         #time.sleep(60)
-        if(i%20 == 0):
+        if(i%10 == 0):
             send_message(errorMessage="running")
+    conn.close()
 
 #getting proxies function
 def get_proxies():
@@ -211,6 +213,27 @@ def get_proxies():
             proxy = ":".join([i.xpath('.//td[1]/text()')[0], i.xpath('.//td[2]/text()')[0]])
             proxies.add(proxy)
     return proxies
+
+#make db connection
+def makeDBconnection():
+    #Establishing the connection
+    conn = psycopg2.connect(
+        database="botdb", user='postgres', password='admin', host='127.0.0.1', port= '5432'
+    )
+    #Setting auto commit false
+    conn.autocommit = True
+    return conn
+
+#insert new entry
+def insertInDB(conn, logText):
+    #Creating a cursor object using the cursor() method
+    cursor = conn.cursor()
+    
+    # Preparing SQL queries to INSERT a record into the database.
+    cursor.execute('''INSERT INTO logger (log) VALUES (%s);''', (logText,))
+
+    # Commit your changes in the database
+    conn.commit()
 
 #run the program
 main_function()
