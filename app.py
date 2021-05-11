@@ -35,6 +35,8 @@ def send_message(errorMessage, availableShots = "NA", forDate = "NA", errorCode 
         message = "change kr diya hihihihi"
     elif(errorMessage == "noError"):
         message = availableShots + " shots available at " + centerName + ", " + centerPincode + " of vaccine " + vaccine + " for date " + str(forDate)
+    elif(errorMessage == "authError"):
+        message = "Auth token expired, last ten calls didn't work"
 
     # get your api_id, api_hash, token
     # from telegram as described above
@@ -122,20 +124,25 @@ def apiCallForDay(x, pin_code, conn, noOfTimes):
 
 #function to call for week
 def apiCallForWeek(pin_code, conn, noOfTimes):
-    inputDate = date.today().strftime("%d-%m-%Y")
+    inputDate = (datetime.now() + timedelta(hours = 5, minutes = 30)).strftime("%d-%m-%Y")
+    #inputDate = date.today().strftime("%d-%m-%Y")
 
-    url = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByPin?pincode=" + pin_code + "&date=" + inputDate
+    url = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/calendarByPin?pincode=" + pin_code + "&date=" + inputDate
 
     payload={}
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51',
+                'Authorization': 'Bearer Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX25hbWUiOiI0ZjUxMWJlMi05OWRjLTQxZTUtOTRhNy0zMjY2ZTFmMDFhZWYiLCJ1c2VyX2lkIjoiNGY1MTFiZTItOTlkYy00MWU1LTk0YTctMzI2NmUxZjAxYWVmIiwidXNlcl90eXBlIjoiQkVORUZJQ0lBUlkiLCJtb2JpbGVfbnVtYmVyIjo4NTk3MTY1ODgxLCJiZW5lZmljaWFyeV9yZWZlcmVuY2VfaWQiOjUzMTc4MzY2MTQyODIwLCJzZWNyZXRfa2V5IjoiYjVjYWIxNjctNzk3Ny00ZGYxLTgwMjctYTYzYWExNDRmMDRlIiwidWEiOiJNb3ppbGxhLzUuMCAoV2luZG93cyBOVCAxMC4wOyBXaW42NDsgeDY0KSBBcHBsZVdlYktpdC81MzcuMzYgKEtIVE1MLCBsaWtlIEdlY2tvKSBDaHJvbWUvOTAuMC40NDMwLjkzIFNhZmFyaS81MzcuMzYgRWRnLzkwLjAuODE4LjU2IiwiZGF0ZV9tb2RpZmllZCI6IjIwMjEtMDUtMTFUMTk6MDc6NTAuNTc1WiIsImlhdCI6MTYyMDc2MDA3MCwiZXhwIjoxNjIwNzYwOTcwfQ.3qLReOcYr0hFu9KRMpShBmn0sXt1Lms8VF_uoBBMVs4'
+    }
 
     response = requests.request("GET", url, data=payload, headers=headers) 
-    logText = str(noOfTimes) + " " + str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Week " + str(time.strftime("%H:%M:%S", time.localtime()))
+    logText = str(noOfTimes) + " " + str(pin_code) + " " + str(inputDate) + " " + str(response.status_code) + " Week " + str((datetime.now()+timedelta( hours=5, minutes=30 )).strftime('%H:%M:%S'))
     insertInDB(conn=conn, logText=logText)
+    print(logText)
     
     if(response.status_code != 200):
-        send_message(errorMessage="error", forDate=str(inputDate), errorCode=str(response.status_code), centerPincode=str(pin_code))
-        return
+        #send_message(errorMessage="error", forDate=str(inputDate), errorCode=str(response.status_code), centerPincode=str(pin_code))
+        time.sleep(10)
+        return response.status_code
     available_centers = json.loads(response.text)
     if(len(available_centers["centers"]) != 0):
         for z in available_centers["centers"]:
@@ -149,18 +156,28 @@ def apiCallForWeek(pin_code, conn, noOfTimes):
                         shotDate = str(y['date'])
                         send_message(errorMessage="noError", centerName=centerName, centerPincode=centerPincode, availableShots=availableShots, vaccine=vaccine, forDate=shotDate)
     time.sleep(10)
+    return response.status_code
 
 #check availability of vaccines
 def check_slots(noOfTimes, conn):
     pin_codes = os.getenv('PIN_CODES').split(',')
 
     #proxies = get_proxies()
-
+    noOfErrors = 0
     for x in range(0,7):
         for pin_code in pin_codes:
             
-            apiCallForWeek(pin_code = pin_code, conn = conn, noOfTimes=noOfTimes)
-            apiCallForDay(x = x, pin_code = pin_code, conn = conn, noOfTimes=noOfTimes)
+            statusCode = apiCallForWeek(pin_code = pin_code, conn = conn, noOfTimes=noOfTimes)
+
+            if(statusCode == 200):
+                noOfErrors = 0
+            elif(statusCode != 200):
+                noOfErrors = noOfErrors + 1
+                if(noOfErrors == 10):
+                    send_message(errorMessage="authError")
+                    noOfErrors = 0
+
+            #apiCallForDay(x = x, pin_code = pin_code, conn = conn, noOfTimes=noOfTimes)
             
             """
             nextDate = date.today()+timedelta(x)
@@ -198,7 +215,7 @@ def main_function():
         check_slots(noOfTimes=i, conn = conn)
         i = i + 1
         #time.sleep(60)
-        if(i%10 == 0):
+        if(i%25 == 0):
             send_message(errorMessage="running")
     conn.close()
 
